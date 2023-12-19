@@ -176,4 +176,122 @@ contract DepositTest is Test {
         deposit.buyerWithdraw();
         vm.stopPrank();
     }
+
+    function test_CompleteLotteryCycle() public {
+        // Setup: Multiple participants deposit funds
+        address[] memory participants = new address[](4);
+        participants[0] = address(3);
+        participants[1] = address(4);
+        participants[2] = address(5);
+        participants[3] = address(6);
+        uint256 depositAmount = 1 ether;
+
+        for (uint i = 0; i < participants.length; i++) {
+            vm.deal(participants[i], depositAmount);
+            vm.startPrank(participants[i]);
+            deposit.deposit{value: depositAmount}();
+            vm.stopPrank();
+        }
+
+        // End the lottery
+        vm.prank(lottery);
+        deposit.changeLotteryState(Deposit.LotteryState.ENDED);
+
+        // Mark some participants as winners (e.g., first two)
+        for (uint i = 0; i < 2; i++) {
+            vm.prank(lottery);
+            deposit.setWinner(participants[i]);
+        }
+
+        // Ensure winners cannot withdraw
+        for (uint i = 0; i < 2; i++) {
+            vm.startPrank(participants[i]);
+            vm.expectRevert("Winners cannot withdraw");
+            deposit.buyerWithdraw();
+            vm.stopPrank();
+        }
+
+        // Ensure losers can withdraw
+        for (uint i = 2; i < participants.length; i++) {
+            uint256 initialBalance = participants[i].balance;
+            vm.startPrank(participants[i]);
+            deposit.buyerWithdraw();
+            assertEq(
+                participants[i].balance,
+                initialBalance + depositAmount,
+                "Loser should withdraw their deposit"
+            );
+            vm.stopPrank();
+        }
+
+        // Test seller withdrawal and tax distribution
+        uint256 totalPrizePool = depositAmount * 2; // Assuming 2 winners
+        uint256 protocolTax = (totalPrizePool * 5) / 100;
+        uint256 amountToSeller = totalPrizePool - protocolTax;
+        uint256 initialSellerBalance = seller.balance;
+        uint256 initialMultisigBalance = multisigWallet.balance;
+
+        vm.prank(lottery);
+        deposit.sellerWithdraw();
+
+        assertEq(
+            seller.balance,
+            initialSellerBalance + amountToSeller,
+            "Seller should receive correct amount after tax"
+        );
+        assertEq(
+            multisigWallet.balance,
+            initialMultisigBalance + protocolTax,
+            "Multisig should receive the tax amount"
+        );
+    }
+
+    function test_EdgeCaseDeposits() public {
+        address user = address(3);
+        uint256 depositAmount = 1 ether;
+
+        // Setup: Provide Ether to the user
+        vm.deal(user, depositAmount);
+
+        // Case 1: Deposit right before the lottery starts
+        vm.startPrank(user);
+        deposit.deposit{value: depositAmount}();
+        vm.stopPrank();
+        assertEq(
+            deposit.deposits(user),
+            depositAmount,
+            "Deposit before start should be recorded"
+        );
+
+        // Start the lottery
+        vm.prank(lottery);
+        deposit.changeLotteryState(Deposit.LotteryState.ACTIVE);
+
+        // End the lottery to allow withdrawal
+        vm.prank(lottery);
+        deposit.changeLotteryState(Deposit.LotteryState.ENDED);
+
+        // Case 2: Attempt to withdraw multiple times
+        vm.startPrank(user);
+        deposit.buyerWithdraw();
+        assertEq(
+            deposit.deposits(user),
+            0,
+            "User should have withdrawn their deposit"
+        );
+        vm.expectRevert("No funds to withdraw");
+        deposit.buyerWithdraw(); // Attempt to withdraw again
+        vm.stopPrank();
+
+        // Case 3: Deposit right after the lottery ends
+        vm.deal(user, depositAmount);
+        vm.startPrank(user);
+        deposit.deposit{value: depositAmount}();
+        vm.stopPrank();
+        assertEq(
+            deposit.deposits(user),
+            depositAmount,
+            "Deposit after end should be recorded"
+        );
+    }
 }
