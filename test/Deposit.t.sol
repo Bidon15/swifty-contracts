@@ -44,11 +44,7 @@ contract DepositTest is Test {
 
         vm.startPrank(user);
         deposit.deposit{value: depositAmount}();
-        assertEq(
-            deposit.deposits(user),
-            depositAmount,
-            "Deposit amount should be recorded correctly"
-        );
+        assertEq(deposit.deposits(user), depositAmount, "Deposit amount should be recorded correctly");
         vm.stopPrank();
     }
 
@@ -56,18 +52,12 @@ contract DepositTest is Test {
         vm.prank(lottery);
         deposit.changeLotteryState(Deposit.LotteryState.ACTIVE);
         assertEq(
-            uint(deposit.lotteryState()),
-            uint(Deposit.LotteryState.ACTIVE),
-            "Lottery state should be ACTIVE"
+            uint256(deposit.lotteryState()), uint256(Deposit.LotteryState.ACTIVE), "Lottery state should be ACTIVE"
         );
 
         vm.prank(lottery);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
-        assertEq(
-            uint(deposit.lotteryState()),
-            uint(Deposit.LotteryState.ENDED),
-            "Lottery state should be ENDED"
-        );
+        assertEq(uint256(deposit.lotteryState()), uint256(Deposit.LotteryState.ENDED), "Lottery state should be ENDED");
     }
 
     function test_NonWinnerWithdrawal() public {
@@ -87,11 +77,7 @@ contract DepositTest is Test {
         // Non-winner attempts to withdraw
         vm.startPrank(nonWinner);
         deposit.buyerWithdraw();
-        assertEq(
-            deposit.deposits(nonWinner),
-            0,
-            "Non-winner should be able to withdraw their deposit"
-        );
+        assertEq(deposit.deposits(nonWinner), 0, "Non-winner should be able to withdraw their deposit");
         vm.stopPrank();
     }
 
@@ -112,16 +98,8 @@ contract DepositTest is Test {
         deposit.deposit{value: user2Deposit}();
         vm.stopPrank();
 
-        assertEq(
-            deposit.deposits(user1),
-            user1Deposit,
-            "User1 deposit should be recorded correctly"
-        );
-        assertEq(
-            deposit.deposits(user2),
-            user2Deposit,
-            "User2 deposit should be recorded correctly"
-        );
+        assertEq(deposit.deposits(user1), user1Deposit, "User1 deposit should be recorded correctly");
+        assertEq(deposit.deposits(user2), user2Deposit, "User2 deposit should be recorded correctly");
     }
 
     function test_SellerWithdrawalWithProtocolTax() public {
@@ -145,16 +123,8 @@ contract DepositTest is Test {
         deposit.sellerWithdraw();
 
         // Check balances
-        assertEq(
-            address(multisigWallet).balance,
-            protocolTax,
-            "Multisig should receive the correct tax amount"
-        );
-        assertEq(
-            address(seller).balance,
-            amountToSeller,
-            "Seller should receive the correct amount after tax"
-        );
+        assertEq(address(multisigWallet).balance, protocolTax, "Multisig should receive the correct tax amount");
+        assertEq(address(seller).balance, amountToSeller, "Seller should receive the correct amount after tax");
     }
 
     function test_WinnerCannotWithdraw() public {
@@ -186,7 +156,7 @@ contract DepositTest is Test {
         participants[3] = address(6);
         uint256 depositAmount = 1 ether;
 
-        for (uint i = 0; i < participants.length; i++) {
+        for (uint256 i = 0; i < participants.length; i++) {
             vm.deal(participants[i], depositAmount);
             vm.startPrank(participants[i]);
             deposit.deposit{value: depositAmount}();
@@ -198,13 +168,13 @@ contract DepositTest is Test {
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
 
         // Mark some participants as winners (e.g., first two)
-        for (uint i = 0; i < 2; i++) {
+        for (uint256 i = 0; i < 2; i++) {
             vm.prank(lottery);
             deposit.setWinner(participants[i]);
         }
 
         // Ensure winners cannot withdraw
-        for (uint i = 0; i < 2; i++) {
+        for (uint256 i = 0; i < 2; i++) {
             vm.startPrank(participants[i]);
             vm.expectRevert("Winners cannot withdraw");
             deposit.buyerWithdraw();
@@ -212,15 +182,11 @@ contract DepositTest is Test {
         }
 
         // Ensure losers can withdraw
-        for (uint i = 2; i < participants.length; i++) {
+        for (uint256 i = 2; i < participants.length; i++) {
             uint256 initialBalance = participants[i].balance;
             vm.startPrank(participants[i]);
             deposit.buyerWithdraw();
-            assertEq(
-                participants[i].balance,
-                initialBalance + depositAmount,
-                "Loser should withdraw their deposit"
-            );
+            assertEq(participants[i].balance, initialBalance + depositAmount, "Loser should withdraw their deposit");
             vm.stopPrank();
         }
 
@@ -235,15 +201,9 @@ contract DepositTest is Test {
         deposit.sellerWithdraw();
 
         assertEq(
-            seller.balance,
-            initialSellerBalance + amountToSeller,
-            "Seller should receive correct amount after tax"
+            seller.balance, initialSellerBalance + amountToSeller, "Seller should receive correct amount after tax"
         );
-        assertEq(
-            multisigWallet.balance,
-            initialMultisigBalance + protocolTax,
-            "Multisig should receive the tax amount"
-        );
+        assertEq(multisigWallet.balance, initialMultisigBalance + protocolTax, "Multisig should receive the tax amount");
     }
 
     function test_EdgeCaseDeposits() public {
@@ -257,11 +217,7 @@ contract DepositTest is Test {
         vm.startPrank(user);
         deposit.deposit{value: depositAmount}();
         vm.stopPrank();
-        assertEq(
-            deposit.deposits(user),
-            depositAmount,
-            "Deposit before start should be recorded"
-        );
+        assertEq(deposit.deposits(user), depositAmount, "Deposit before start should be recorded");
 
         // Start the lottery
         vm.prank(lottery);
@@ -274,11 +230,7 @@ contract DepositTest is Test {
         // Case 2: Attempt to withdraw multiple times
         vm.startPrank(user);
         deposit.buyerWithdraw();
-        assertEq(
-            deposit.deposits(user),
-            0,
-            "User should have withdrawn their deposit"
-        );
+        assertEq(deposit.deposits(user), 0, "User should have withdrawn their deposit");
         vm.expectRevert("No funds to withdraw");
         deposit.buyerWithdraw(); // Attempt to withdraw again
         vm.stopPrank();
@@ -288,10 +240,6 @@ contract DepositTest is Test {
         vm.startPrank(user);
         deposit.deposit{value: depositAmount}();
         vm.stopPrank();
-        assertEq(
-            deposit.deposits(user),
-            depositAmount,
-            "Deposit after end should be recorded"
-        );
+        assertEq(deposit.deposits(user), depositAmount, "Deposit after end should be recorded");
     }
 }
