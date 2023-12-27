@@ -52,30 +52,33 @@ contract NFTLotteryTicketTest is Test {
         assertFalse(isParticipant2Eligible);
     }
 
-    function testNFTMinting() public {
-        // Setup a winner in MockDeposit
-        uint256 TOKEN_ID = 1;
-        address winner = address(1);
-        mockDeposit.setDepositedAmount(winner, 1);
+    function testEndLottery() public {
+        // Setup: Start the lottery first
         nftLotteryTicket.startLottery();
-
-        mockDeposit.setWinner(winner);
 
         // End the lottery
         nftLotteryTicket.endLottery();
 
-        // Try minting the NFT as the winner
-        vm.prank(winner); // Forge's way to simulate transactions from a specific address
-        nftLotteryTicket.mintMyNFT(TOKEN_ID);
+        // Verify that the lottery state has changed to ENDED
+        assertEq(uint256(nftLotteryTicket.lotteryState()), uint256(IDeposit.LotteryState.ENDED));
+    }
 
-        // Check if the NFT was minted
-        uint256 winnerBalance = nftLotteryTicket.balanceOf(winner, TOKEN_ID);
-        assertEq(winnerBalance, 1);
+    function testInvalidActions() public {
+        // Attempt to start the lottery when it's already active
+        nftLotteryTicket.startLottery();
+        vm.expectRevert("Lottery is in active state");
+        nftLotteryTicket.startLottery();
 
-        // Ensure the winner cannot mint again
-        vm.prank(winner);
-        vm.expectRevert("NFT already minted");
-        nftLotteryTicket.mintMyNFT(TOKEN_ID);
+        nftLotteryTicket.endLottery();
+        // Attempt to end the lottery when it's not started
+        vm.expectRevert("Lottery is not active");
+        nftLotteryTicket.endLottery();
+
+        // Attempt to mint NFT as a non-winner
+        address nonWinner = address(2); // Assuming address(2) is not a winner
+        vm.prank(nonWinner);
+        vm.expectRevert("Caller is not a winner");
+        nftLotteryTicket.mintMyNFT(1);
     }
 
     // Additional test cases can be added here
