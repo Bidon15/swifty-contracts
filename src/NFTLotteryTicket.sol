@@ -3,14 +3,18 @@ pragma solidity ^0.8.13;
 
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import "./interfaces/IDeposit.sol";
+import "./vendor/GelatoVRFConsumerBase.sol";
 
-contract NFTLotteryTicket is ERC1155 {
+contract NFTLotteryTicket is ERC1155, GelatoVRFConsumerBase {
     uint256 public constant TOKEN_ID = 1;
 
     address public seller;
     IDeposit public depositContract;
     IDeposit.LotteryState public lotteryState;
     uint256 public minimumDepositAmount;
+
+    // Needed for GelatoVRFConsumerBase
+    address private _operatorAddr;
 
     // TODO: Do we actually need to clear this array?
     // If yes, then we need to add a function to clear this array
@@ -21,6 +25,10 @@ contract NFTLotteryTicket is ERC1155 {
     address[] private eligibleParticipants;
     uint256 public numberOfTickets;
     mapping(address => bool) public hasMinted;
+
+    event LotteryStarted();
+    event WinnerSelected(address indexed winner);
+    event LotteryEnded();
 
     constructor(string memory uri) ERC1155(uri) {
         seller = msg.sender;
@@ -61,11 +69,57 @@ contract NFTLotteryTicket is ERC1155 {
         _;
     }
 
+    function setOperatorAddress(address operator) public onlySeller {
+        require(operator != address(0), "Invalid operator address");
+        _operatorAddr = operator;
+    }
+
     // Private function for random number generation
     // TODO: Replace with VRF logic and callback based
-    function _getRandomNumber(uint256 seed, uint256 max) private view returns (uint256) {
-        // Placeholder for basic pseudo-random generation; to be replaced with VRF logic
-        return uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, seed))) % max;
+
+    function _operator() internal view virtual override returns (address) {
+        return _operatorAddr;
+    }
+
+    function _fulfillRandomness(uint256 randomness, uint256, bytes memory extraData) internal override {
+        require(lotteryState == IDeposit.LotteryState.ACTIVE, "Lottery is not active");
+        require(numberOfTickets > 0, "No tickets left to allocate");
+
+        address sellerAddress = abi.decode(extraData, (address));
+
+        // You can now use sellerAddress for verification or tracking
+        require(sellerAddress == msg.sender, "Only the original seller can fulfill randomness");
+
+        uint256 randomIndex = randomness % eligibleParticipants.length;
+        address selectedWinner = eligibleParticipants[randomIndex];
+
+        if (!depositContract.isWinner(selectedWinner)) {
+            depositContract.setWinner(selectedWinner);
+            removeParticipant(randomIndex);
+            numberOfTickets--;
+
+            // Emit an event each time a winner is selected
+            emit WinnerSelected(selectedWinner);
+
+            // If there are still tickets left, you can request more randomness for the next winner
+            if (numberOfTickets == 0) {
+                emit LotteryEnded();
+            }
+        }
+    }
+
+    function initiateSelectWinner() public onlySeller lotteryStarted {
+        require(numberOfTickets > 0, "All tickets have been allocated");
+        require(eligibleParticipants.length > 0, "No eligible participants left");
+
+        // Use the seller's address as extraData
+        bytes memory extraData = abi.encode(msg.sender);
+
+        // Request randomness from Gelato's VRF with the seller's address as extraData
+        _requestRandomness(extraData);
+
+        // Optionally, you can emit an event here if you want to signal that the selection process has started
+        // emit LotterySelectionInitiated();
     }
 
     function setMinimumDepositAmount(uint256 _amount) public onlySeller {
@@ -96,21 +150,6 @@ contract NFTLotteryTicket is ERC1155 {
         // Process winners, mint NFT tickets, etc.
     }
 
-    function selectWinners() public onlySeller lotteryStarted {
-        require(eligibleParticipants.length >= numberOfTickets, "Not enough eligible participants");
-
-        uint256 winnersCount = 0;
-        while (winnersCount < numberOfTickets) {
-            uint256 randomIndex = _getRandomNumber(block.timestamp, eligibleParticipants.length);
-            address selectedWinner = eligibleParticipants[randomIndex];
-
-            if (!depositContract.isWinner(selectedWinner)) {
-                depositContract.setWinner(selectedWinner);
-                winnersCount++;
-            }
-        }
-    }
-
     // Function to check and mark eligible participants
     function checkEligibleParticipants() internal {
         address[] memory participants = depositContract.getParticipants();
@@ -121,6 +160,18 @@ contract NFTLotteryTicket is ERC1155 {
                 eligibleParticipants.push(participants[i]);
             }
         }
+    }
+
+    function removeParticipant(uint256 index) internal {
+        require(index < eligibleParticipants.length, "Index out of bounds");
+
+        // If the winner is not the last element, swap it with the last element
+        if (index < eligibleParticipants.length - 1) {
+            eligibleParticipants[index] = eligibleParticipants[eligibleParticipants.length - 1];
+        }
+
+        // Remove the last element (now the winner)
+        eligibleParticipants.pop();
     }
 
     function isParticipantEligible(address participant) public view returns (bool) {
