@@ -1,66 +1,77 @@
-## Foundry
+# NFT Lottery Ticket System
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+This system allows a seller to create and manage an NFT-based lottery system using two main contracts: `Deposit` and `NFTLotteryTicket`. Participants can deposit funds to be eligible for the lottery, and winners are selected randomly via Gelato's VRF service to receive unique NFT tickets.
 
-Foundry consists of:
+## Contracts
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+- `Deposit.sol`: Handles participants' deposits and eligibility.
+- `NFTLotteryTicket.sol`: Manages the lottery state, selects winners, and mints NFT tickets.
 
-## Documentation
+## How to Deploy (Applicable to sellers)
 
-https://book.getfoundry.sh/
+1. **Deploy the Deposit Contract:**
 
-## Usage
+   - Compile `Deposit.sol` using Forge, Remix, or Hardhat.
+   - Deploy the contract to your chosen network. During deployment, specify the seller's address as a constructor parameter.
 
-### Build
+2. **Deploy the NFTLotteryTicket Contract:**
 
-```shell
-$ forge build
-```
+   - Compile `NFTLotteryTicket.sol` similarly.
+   - Deploy the contract, providing the URI for the NFT metadata as a constructor parameter.
 
-### Test
+3. **Set Operator Address for Gelato VRF:**
 
-```shell
-$ forge test
-```
+   - Call `setOperatorAddress` on `NFTLotteryTicket` with the operator address provided by Gelato.
 
-### Format
+4. **Link the Two Contracts:**
+   - Call `setDepositContract` on `NFTLotteryTicket` with the address of the deployed `Deposit` contract.
+   - Call `setLotteryAddress` on `Deposit` with the address of the deployed `NFTLotteryTicket` contract.
 
-```shell
-$ forge fmt
-```
+## How to Use
 
-### Gas Snapshots
+### As the Seller
 
-```shell
-$ forge snapshot
-```
+1. **Initialize the Lottery:**
 
-### Anvil
+   - Set the minimum deposit amount required for participants to be eligible using `setMinimumDepositAmount`.
+   - Set the number of tickets/winners using `setNumberOfTickets`.
 
-```shell
-$ anvil
-```
+2. **Start the Lottery:**
 
-### Deploy
+   - Call `startLottery` to change the state to ACTIVE and automatically check for eligible participants.
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+3. **Selecting Winners:**
 
-### Cast
+   - Manually initiate the winner selection process by calling `initiateSelectWinner`.
+   - The contract will request randomness from Gelato's VRF, and winners will be selected one by one.
+   - Monitor the `WinnerSelected` and `LotteryEnded` events.
 
-```shell
-$ cast <subcommand>
-```
+4. **End the Lottery:**
 
-### Help
+   - Once all winners are selected, or when you decide to end the lottery, call `endLottery`.
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+5. **Withdraw Funds:**
+   - After the lottery ends, call `sellerWithdraw` to collect the funds from losing participants.
+
+### As a Participant
+
+1. **Deposit Funds:**
+
+   - Send funds to the `Deposit` contract while the lottery is NOT_STARTED. The amount must meet or exceed the minimum deposit amount.
+
+2. **Check Eligibility:**
+
+   - You can check if you're marked eligible after the lottery starts.
+
+3. **After Lottery Ends:**
+   - If you're a winner, mint your NFT ticket using `mintMyNFT`.
+   - If not a winner, withdraw your deposited funds using `buyerWithdraw`.
+
+## Testing and Security
+
+- Thoroughly test all functionalities, especially around deposits, winner selection, and NFT minting.
+- Consider security best practices and potentially get a smart contract audit.
+
+## Conclusion
+
+This NFT Lottery Ticket System offers a transparent and fair way to distribute unique NFTs to participants. The integration with Gelato VRF ensures randomness in winner selection, and the two-contract architecture separates concerns between handling funds and managing the lottery logic.
