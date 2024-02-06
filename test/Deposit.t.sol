@@ -3,36 +3,23 @@ pragma solidity ^0.8.13;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {Deposit} from "../src/Deposit.sol";
-import {MockLottery} from "./MockLottery.sol";
 
 contract DepositTest is Test {
     Deposit public deposit;
-    MockLottery public mockLottery;
 
     uint256 private sellerPrivateKey = 0xa11ce;
     uint256 private multisigWalletPrivateKey = 0xb334d;
-    uint256 private lotteryPrivateKey = 0xc56ef;
 
     address seller;
     address multisigWallet;
-    address lottery;
 
     function setUp() public {
         // Generate addresses from private keys
         seller = vm.addr(sellerPrivateKey);
         multisigWallet = vm.addr(multisigWalletPrivateKey);
-        lottery = vm.addr(lotteryPrivateKey);
 
         // Deploy the Deposit contract with the seller address
-        deposit = new Deposit(seller);
-
-        // Deploy the Mock Lottery contract
-        mockLottery = new MockLottery();
-
-        // Set up the contract addresses
-        deposit.setLotteryAddress(lottery);
-        mockLottery.setDepositAddress(address(deposit));
-
+        deposit = new Deposit(seller, 123);
         // Set the multisig wallet address in the Deposit contract
         deposit.setMultisigWalletAddress(multisigWallet);
     }
@@ -49,13 +36,13 @@ contract DepositTest is Test {
     }
 
     function test_ChangeLotteryState() public {
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ACTIVE);
         assertEq(
             uint256(deposit.lotteryState()), uint256(Deposit.LotteryState.ACTIVE), "Lottery state should be ACTIVE"
         );
 
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
         assertEq(uint256(deposit.lotteryState()), uint256(Deposit.LotteryState.ENDED), "Lottery state should be ENDED");
     }
@@ -71,7 +58,7 @@ contract DepositTest is Test {
         vm.stopPrank();
 
         // End the lottery
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
 
         // Non-winner attempts to withdraw
@@ -113,13 +100,13 @@ contract DepositTest is Test {
         vm.startPrank(winner);
         deposit.deposit{value: winnerDeposit}();
         vm.stopPrank();
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.setWinner(winner);
 
         // End the lottery and process the withdrawal
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.sellerWithdraw();
 
         // Check balances
@@ -137,9 +124,9 @@ contract DepositTest is Test {
         vm.stopPrank();
 
         // Set as winner and try to withdraw
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.setWinner(winner);
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
         vm.startPrank(winner);
         vm.expectRevert("Winners cannot withdraw");
@@ -164,12 +151,12 @@ contract DepositTest is Test {
         }
 
         // End the lottery
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
 
         // Mark some participants as winners (e.g., first two)
         for (uint256 i = 0; i < 2; i++) {
-            vm.prank(lottery);
+            vm.prank(seller);
             deposit.setWinner(participants[i]);
         }
 
@@ -197,7 +184,7 @@ contract DepositTest is Test {
         uint256 initialSellerBalance = seller.balance;
         uint256 initialMultisigBalance = multisigWallet.balance;
 
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.sellerWithdraw();
 
         assertEq(
@@ -220,11 +207,11 @@ contract DepositTest is Test {
         assertEq(deposit.deposits(user), depositAmount, "Deposit before start should be recorded");
 
         // Start the lottery
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ACTIVE);
 
         // End the lottery to allow withdrawal
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
 
         // Case 2: Attempt to withdraw multiple times

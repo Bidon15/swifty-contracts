@@ -2,12 +2,27 @@
 pragma solidity ^0.8.13;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import "@chainlink/contracts/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
+import "@chainlink/contracts/v0.8/vrf/VRFConsumerBaseV2.sol";
+import "src/interfaces/INFTLotteryTicket.sol";
 
-contract Deposit is Ownable {
+contract Deposit is Ownable(msg.sender), VRFConsumerBaseV2(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625) {
+    uint64 s_subscriptionId;
+    address s_owner;
+    VRFCoordinatorV2Interface COORDINATOR;
+    address vrfCoordinator = 0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625;
+    bytes32 s_keyHash = 0x474e34a077df58807dbe9c96d3c009b23b3c6d0cce433e59bbf5b34f823bc56c;
+    uint32 callbackGasLimit = 40000;
+    uint16 requestConfirmations = 3;
+    uint32 numWords =  1;
+    uint256 public lastFullfiledRequestId;
+
     enum LotteryState {
         NOT_STARTED,
         ACTIVE,
-        ENDED
+        ENDED,
+        VRF_REQUESTED,
+        VRF_COMPLETED
     }
 
     LotteryState public lotteryState;
@@ -17,6 +32,7 @@ contract Deposit is Ownable {
 
     uint256 public minimumDepositAmount;
     uint256 public numberOfTickets;
+    uint256 public randomNumber;
     address[] private eligibleParticipants;
     mapping(address => bool) public hasMinted;
 
@@ -24,6 +40,8 @@ contract Deposit is Ownable {
     mapping(address => bool) public winners;
     address[] public winnerAddresses;
     address[] private participants;
+
+    address public nftContractAddr;
 
     event LotteryStarted();
     event WinnerSelected(address indexed winner);
@@ -59,8 +77,11 @@ contract Deposit is Ownable {
         _;
     }
 
-    constructor(address _seller) {
+    constructor(address _seller, uint64 subscriptionId) {
         seller = _seller;
+        COORDINATOR = VRFCoordinatorV2Interface(vrfCoordinator);
+        s_owner = msg.sender;
+        s_subscriptionId = subscriptionId;
     }
 
     function deposit() public payable whenLotteryNotActive {
@@ -80,7 +101,11 @@ contract Deposit is Ownable {
         multisigWalletAddress = _multisigWalletAddress;
     }
 
-    function changeLotteryState(LotteryState _newState) internal {
+    function setNftContractAddr(address _nftContractAddr) public onlyOwner {
+        nftContractAddr = _nftContractAddr;
+    }    
+
+    function changeLotteryState(LotteryState _newState) public onlySeller {
         lotteryState = _newState;
     }
 
@@ -92,7 +117,7 @@ contract Deposit is Ownable {
         return winnerAddresses;
     }
 
-    function setWinner(address _winner) internal {
+    function setWinner(address _winner) public onlySeller {
         winners[_winner] = true;
         winnerAddresses.push(_winner);
     }
@@ -125,17 +150,18 @@ contract Deposit is Ownable {
         payable(seller).transfer(amountToSeller);
     }
 
+    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal override {
+        changeLotteryState(LotteryState.VRF_COMPLETED);
+        randomNumber = randomWords[0];
+        lastFullfiledRequestId = requestId;
+    }
 
-    function _fulfillRandomness(uint256 randomness, uint256, bytes memory extraData) internal override {
+    function selectWinners() external onlySeller {
         require(lotteryState == LotteryState.ACTIVE, "Lottery is not active");
         require(numberOfTickets > 0, "No tickets left to allocate");
+        require(lotteryState == LotteryState.VRF_COMPLETED, "VRF not completed");
 
-        address sellerAddress = abi.decode(extraData, (address));
-
-        // You can now use sellerAddress for verification or tracking
-        require(sellerAddress == msg.sender, "Only the original seller can fulfill randomness");
-
-        uint256 randomIndex = randomness % eligibleParticipants.length;
+        uint256 randomIndex = randomNumber % eligibleParticipants.length;
         address selectedWinner = eligibleParticipants[randomIndex];
 
         if (!isWinner(selectedWinner)) {
@@ -143,7 +169,6 @@ contract Deposit is Ownable {
             removeParticipant(randomIndex);
             numberOfTickets--;
 
-            // Emit an event each time a winner is selected
             emit WinnerSelected(selectedWinner);
 
             // If there are still tickets left, you can request more randomness for the next winner
@@ -153,25 +178,28 @@ contract Deposit is Ownable {
         }
     }
 
-        function initiateSelectWinner() public onlySeller lotteryStarted {
+    function initiateSelectWinner() public onlySeller lotteryStarted returns(uint256) {
         require(numberOfTickets > 0, "All tickets have been allocated");
         require(eligibleParticipants.length > 0, "No eligible participants left");
+        require(lotteryState != LotteryState.VRF_REQUESTED, "VRF request already initiated");
 
-        // Use the seller's address as extraData
-        bytes memory extraData = abi.encode(msg.sender);
+        changeLotteryState(LotteryState.VRF_REQUESTED);
+        uint256 requestId = COORDINATOR.requestRandomWords(
+            s_keyHash,
+            s_subscriptionId,
+            requestConfirmations,
+            callbackGasLimit,
+            numWords
+        );
 
-        // Request randomness from Gelato's VRF with the seller's address as extraData
-        _requestRandomness(extraData);
-
-        // Optionally, you can emit an event here if you want to signal that the selection process has started
-        // emit LotterySelectionInitiated();
+        return requestId;
     }
 
     function setMinimumDepositAmount(uint256 _amount) public onlySeller {
         minimumDepositAmount = _amount;
     }
 
-        function setNumberOfTickets(uint256 _numberOfTickets) public onlySeller {
+    function setNumberOfTickets(uint256 _numberOfTickets) public onlySeller {
         require(_numberOfTickets > 0, "Number of tickets must be greater than zero");
         numberOfTickets = _numberOfTickets;
     }
@@ -221,5 +249,11 @@ contract Deposit is Ownable {
             }
         }
         return false;
+    }
+
+    function mintMyNFT() public hasNotMinted lotteryEnded {
+        require(isWinner(msg.sender), "Caller is not a winner");
+        hasMinted[msg.sender] = true;
+        INFTLotteryTicket(nftContractAddr).lotteryMint(msg.sender);
     }
 }
