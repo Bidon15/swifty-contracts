@@ -1,21 +1,31 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { Ownable } from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import "@chainlink/contracts/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "@chainlink/contracts/v0.8/vrf/VRFConsumerBaseV2.sol";
 import "src/interfaces/INFTLotteryTicket.sol";
 
-contract Deposit is Ownable(msg.sender), VRFConsumerBaseV2(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625) {
+contract Deposit is Ownable, VRFConsumerBaseV2 {
     uint64 s_subscriptionId;
     address s_owner;
     VRFCoordinatorV2Interface COORDINATOR;
-    address vrfCoordinator = 0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625;
+    address private immutable _vrfCoordinatorV2Address;
     bytes32 s_keyHash = 0x474e34a077df58807dbe9c96d3c009b23b3c6d0cce433e59bbf5b34f823bc56c;
-    uint32 callbackGasLimit = 40000;
+    uint32 callbackGasLimit = 400000;
     uint16 requestConfirmations = 3;
     uint32 numWords =  1;
     uint256 public lastFullfiledRequestId;
+
+    constructor(address _seller, uint64 subscriptionId, address vrfCoordinatorAddr)
+    Ownable(msg.sender)
+    VRFConsumerBaseV2(vrfCoordinatorAddr) {
+        seller = _seller;
+        _vrfCoordinatorV2Address = vrfCoordinatorAddr;
+        COORDINATOR = VRFCoordinatorV2Interface(vrfCoordinatorAddr);
+        s_owner = msg.sender;
+        s_subscriptionId = subscriptionId;
+    }
 
     enum LotteryState {
         NOT_STARTED,
@@ -75,13 +85,6 @@ contract Deposit is Ownable(msg.sender), VRFConsumerBaseV2(0x8103B0A8A00be2DDC77
     modifier whenLotteryNotActive() {
         require(lotteryState != LotteryState.ACTIVE, "Lottery is currently active");
         _;
-    }
-
-    constructor(address _seller, uint64 subscriptionId) {
-        seller = _seller;
-        COORDINATOR = VRFCoordinatorV2Interface(vrfCoordinator);
-        s_owner = msg.sender;
-        s_subscriptionId = subscriptionId;
     }
 
     function deposit() public payable whenLotteryNotActive {
@@ -151,15 +154,14 @@ contract Deposit is Ownable(msg.sender), VRFConsumerBaseV2(0x8103B0A8A00be2DDC77
     }
 
     function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal override {
-        changeLotteryState(LotteryState.VRF_COMPLETED);
+        lotteryState = LotteryState.VRF_COMPLETED;
         randomNumber = randomWords[0];
         lastFullfiledRequestId = requestId;
     }
 
     function selectWinners() external onlySeller {
-        require(lotteryState == LotteryState.ACTIVE, "Lottery is not active");
         require(numberOfTickets > 0, "No tickets left to allocate");
-        require(lotteryState == LotteryState.VRF_COMPLETED, "VRF not completed");
+        require(randomNumber > 0, "VRF not completed");
 
         uint256 randomIndex = randomNumber % eligibleParticipants.length;
         address selectedWinner = eligibleParticipants[randomIndex];
@@ -209,7 +211,7 @@ contract Deposit is Ownable(msg.sender), VRFConsumerBaseV2(0x8103B0A8A00be2DDC77
         checkEligibleParticipants();
     }
 
-    function endLottery() public onlySeller lotteryStarted {
+    function endLottery() public onlySeller {
         changeLotteryState(LotteryState.ENDED);
         // Additional logic for ending the lottery
         // Process winners, mint NFT tickets, etc.

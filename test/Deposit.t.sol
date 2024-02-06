@@ -2,10 +2,14 @@
 pragma solidity ^0.8.13;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {Deposit} from "../src/Deposit.sol";
+import "forge-std/console.sol";
+import { NFTLotteryTicket } from "../src/NFTLotteryTicket.sol";
+import { Deposit } from "../src/Deposit.sol";
+import { VRFCoordinatorV2Mock } from "@chainlink/contracts/v0.8/mocks/VRFCoordinatorV2Mock.sol";
 
 contract DepositTest is Test {
     Deposit public deposit;
+    VRFCoordinatorV2Mock public vrfMock;
 
     uint256 private sellerPrivateKey = 0xa11ce;
     uint256 private multisigWalletPrivateKey = 0xb334d;
@@ -18,10 +22,19 @@ contract DepositTest is Test {
         seller = vm.addr(sellerPrivateKey);
         multisigWallet = vm.addr(multisigWalletPrivateKey);
 
+        vrfMock = new VRFCoordinatorV2Mock(0, 0);
+        vm.startPrank(seller);
+        uint64 subId = vrfMock.createSubscription();
+        vrfMock.fundSubscription(subId, 1000000000000000000000);
+
         // Deploy the Deposit contract with the seller address
-        deposit = new Deposit(seller, 123);
+        deposit = new Deposit(seller, subId, address(vrfMock));
+
         // Set the multisig wallet address in the Deposit contract
         deposit.setMultisigWalletAddress(multisigWallet);
+
+        vrfMock.addConsumer(subId, address(deposit));
+        vm.stopPrank();
     }
 
     function test_DepositFunds() public {
@@ -228,5 +241,59 @@ contract DepositTest is Test {
         deposit.deposit{value: depositAmount}();
         vm.stopPrank();
         assertEq(deposit.deposits(user), depositAmount, "Deposit after end should be recorded");
+    }
+
+    function test_randomNumberGet() public {
+        address user = address(3);
+        vm.startPrank(user);
+        vm.deal(user, 1 ether);
+        deposit.deposit{value: 1 ether}();
+        vm.stopPrank();
+        
+
+        vm.startPrank(seller);
+        deposit.setNumberOfTickets(10);
+        deposit.setMinimumDepositAmount(1 ether);
+        deposit.startLottery();
+        uint requestId = deposit.initiateSelectWinner();
+        vm.stopPrank();
+
+        vm.prank(address(vrfMock));
+        vrfMock.fulfillRandomWords(requestId, address(deposit));
+        
+        assertEq(deposit.lastFullfiledRequestId(), requestId, "incorrect requestId");
+        assertGt(deposit.randomNumber(), 0, "incorrect random number");      
+    }
+
+    function test_nftMintHappyPath() public {
+        address user = address(3);
+        vm.startPrank(user);
+        vm.deal(user, 1 ether);
+        deposit.deposit{value: 1 ether}();
+        vm.stopPrank();
+
+        vm.startPrank(seller);
+        NFTLotteryTicket nftLotteryTicket = new NFTLotteryTicket("ipfs://example_uri/");
+        nftLotteryTicket.setDepositContractAddr(address(deposit));
+        deposit.setNftContractAddr(address(nftLotteryTicket));
+        deposit.setNumberOfTickets(10);
+        deposit.setMinimumDepositAmount(1 ether);
+        deposit.startLottery();
+        uint requestId = deposit.initiateSelectWinner();
+        vm.stopPrank();
+
+        vm.prank(address(vrfMock));
+        vrfMock.fulfillRandomWords(requestId, address(deposit));
+        
+        vm.startPrank(seller);
+        deposit.selectWinners();
+        deposit.endLottery();
+        vm.stopPrank();
+        assertEq(deposit.isWinner(user), true, "user should be winner");
+        
+        vm.startPrank(user);
+        deposit.mintMyNFT();
+        assertEq(nftLotteryTicket.balanceOf(user, 1), 1, "Joe must own NFT#1");
+        vm.stopPrank();
     }
 }
