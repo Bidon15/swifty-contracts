@@ -2,39 +2,39 @@
 pragma solidity ^0.8.13;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {Deposit} from "../src/Deposit.sol";
-import {MockLottery} from "./MockLottery.sol";
+import "forge-std/console.sol";
+import { NFTLotteryTicket } from "../src/NFTLotteryTicket.sol";
+import { Deposit } from "../src/Deposit.sol";
+import { VRFCoordinatorV2Mock } from "@chainlink/contracts/v0.8/mocks/VRFCoordinatorV2Mock.sol";
 
 contract DepositTest is Test {
     Deposit public deposit;
-    MockLottery public mockLottery;
+    VRFCoordinatorV2Mock public vrfMock;
 
     uint256 private sellerPrivateKey = 0xa11ce;
     uint256 private multisigWalletPrivateKey = 0xb334d;
-    uint256 private lotteryPrivateKey = 0xc56ef;
 
     address seller;
     address multisigWallet;
-    address lottery;
 
     function setUp() public {
         // Generate addresses from private keys
         seller = vm.addr(sellerPrivateKey);
         multisigWallet = vm.addr(multisigWalletPrivateKey);
-        lottery = vm.addr(lotteryPrivateKey);
+
+        vrfMock = new VRFCoordinatorV2Mock(0, 0);
+        vm.startPrank(seller);
+        uint64 subId = vrfMock.createSubscription();
+        vrfMock.fundSubscription(subId, 1000000000000000000000);
 
         // Deploy the Deposit contract with the seller address
-        deposit = new Deposit(seller);
-
-        // Deploy the Mock Lottery contract
-        mockLottery = new MockLottery();
-
-        // Set up the contract addresses
-        deposit.setLotteryAddress(lottery);
-        mockLottery.setDepositAddress(address(deposit));
+        deposit = new Deposit(seller, subId, address(vrfMock));
 
         // Set the multisig wallet address in the Deposit contract
         deposit.setMultisigWalletAddress(multisigWallet);
+
+        vrfMock.addConsumer(subId, address(deposit));
+        vm.stopPrank();
     }
 
     function test_DepositFunds() public {
@@ -49,13 +49,13 @@ contract DepositTest is Test {
     }
 
     function test_ChangeLotteryState() public {
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ACTIVE);
         assertEq(
             uint256(deposit.lotteryState()), uint256(Deposit.LotteryState.ACTIVE), "Lottery state should be ACTIVE"
         );
 
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
         assertEq(uint256(deposit.lotteryState()), uint256(Deposit.LotteryState.ENDED), "Lottery state should be ENDED");
     }
@@ -71,7 +71,7 @@ contract DepositTest is Test {
         vm.stopPrank();
 
         // End the lottery
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
 
         // Non-winner attempts to withdraw
@@ -113,13 +113,13 @@ contract DepositTest is Test {
         vm.startPrank(winner);
         deposit.deposit{value: winnerDeposit}();
         vm.stopPrank();
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.setWinner(winner);
 
         // End the lottery and process the withdrawal
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.sellerWithdraw();
 
         // Check balances
@@ -137,9 +137,9 @@ contract DepositTest is Test {
         vm.stopPrank();
 
         // Set as winner and try to withdraw
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.setWinner(winner);
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
         vm.startPrank(winner);
         vm.expectRevert("Winners cannot withdraw");
@@ -164,12 +164,12 @@ contract DepositTest is Test {
         }
 
         // End the lottery
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
 
         // Mark some participants as winners (e.g., first two)
         for (uint256 i = 0; i < 2; i++) {
-            vm.prank(lottery);
+            vm.prank(seller);
             deposit.setWinner(participants[i]);
         }
 
@@ -197,7 +197,7 @@ contract DepositTest is Test {
         uint256 initialSellerBalance = seller.balance;
         uint256 initialMultisigBalance = multisigWallet.balance;
 
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.sellerWithdraw();
 
         assertEq(
@@ -220,11 +220,11 @@ contract DepositTest is Test {
         assertEq(deposit.deposits(user), depositAmount, "Deposit before start should be recorded");
 
         // Start the lottery
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ACTIVE);
 
         // End the lottery to allow withdrawal
-        vm.prank(lottery);
+        vm.prank(seller);
         deposit.changeLotteryState(Deposit.LotteryState.ENDED);
 
         // Case 2: Attempt to withdraw multiple times
@@ -241,5 +241,59 @@ contract DepositTest is Test {
         deposit.deposit{value: depositAmount}();
         vm.stopPrank();
         assertEq(deposit.deposits(user), depositAmount, "Deposit after end should be recorded");
+    }
+
+    function test_randomNumberGet() public {
+        address user = address(3);
+        vm.startPrank(user);
+        vm.deal(user, 1 ether);
+        deposit.deposit{value: 1 ether}();
+        vm.stopPrank();
+        
+
+        vm.startPrank(seller);
+        deposit.setNumberOfTickets(10);
+        deposit.setMinimumDepositAmount(1 ether);
+        deposit.startLottery();
+        uint requestId = deposit.initiateSelectWinner();
+        vm.stopPrank();
+
+        vm.prank(address(vrfMock));
+        vrfMock.fulfillRandomWords(requestId, address(deposit));
+        
+        assertEq(deposit.lastFullfiledRequestId(), requestId, "incorrect requestId");
+        assertGt(deposit.randomNumber(), 0, "incorrect random number");      
+    }
+
+    function test_nftMintHappyPath() public {
+        address user = address(3);
+        vm.startPrank(user);
+        vm.deal(user, 1 ether);
+        deposit.deposit{value: 1 ether}();
+        vm.stopPrank();
+
+        vm.startPrank(seller);
+        NFTLotteryTicket nftLotteryTicket = new NFTLotteryTicket("ipfs://example_uri/");
+        nftLotteryTicket.setDepositContractAddr(address(deposit));
+        deposit.setNftContractAddr(address(nftLotteryTicket));
+        deposit.setNumberOfTickets(10);
+        deposit.setMinimumDepositAmount(1 ether);
+        deposit.startLottery();
+        uint requestId = deposit.initiateSelectWinner();
+        vm.stopPrank();
+
+        vm.prank(address(vrfMock));
+        vrfMock.fulfillRandomWords(requestId, address(deposit));
+        
+        vm.startPrank(seller);
+        deposit.selectWinners();
+        deposit.endLottery();
+        vm.stopPrank();
+        assertEq(deposit.isWinner(user), true, "user should be winner");
+        
+        vm.startPrank(user);
+        deposit.mintMyNFT();
+        assertEq(nftLotteryTicket.balanceOf(user, 1), 1, "Joe must own NFT#1");
+        vm.stopPrank();
     }
 }
