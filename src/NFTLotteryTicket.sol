@@ -10,6 +10,8 @@ contract NFTLotteryTicket is ERC1155, Ownable(msg.sender) {
     uint256 public nextTokenId = 1;
     address public depositContractAddr;
 
+    error NonTransferable();
+
     function setDepositContractAddr(address _depositContractAddr) public onlyOwner {
         depositContractAddr = _depositContractAddr;
     }
@@ -19,5 +21,25 @@ contract NFTLotteryTicket is ERC1155, Ownable(msg.sender) {
 
         _mint(winner, nextTokenId, 1, ""); // Mint 1 NFT to the winner
         nextTokenId++;
+    }
+
+    function safeTransferFrom(
+        address from,
+        address to,
+        uint256 id,
+        uint256 amount,
+        bytes memory data
+    ) public override {
+        revert NonTransferable();
+    }
+
+    function safeBatchTransferFrom(
+        address from,
+        address to,
+        uint256[] memory ids,
+        uint256[] memory amounts,
+        bytes memory data
+    ) public override {
+        revert NonTransferable();
     }
 }
