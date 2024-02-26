@@ -74,4 +74,31 @@ contract NFTLotteryTicketTest is Test {
         deposit.mintMyNFT();
         vm.stopPrank();
     }
+
+    function testSoulbond() public {
+        address joeWinner = address(1);
+        address annaWinner = address(2);
+
+        vm.startPrank(seller);
+        deposit.startLottery();
+        deposit.setWinner(joeWinner);
+        deposit.setWinner(annaWinner);
+        deposit.endLottery();
+        vm.stopPrank();
+
+        vm.prank(joeWinner);
+        deposit.mintMyNFT();
+        vm.expectRevert(NFTLotteryTicket.NonTransferable.selector);
+        nftLotteryTicket.safeTransferFrom(joeWinner, annaWinner, 1, 1, "");
+        vm.stopPrank();
+
+        vm.prank(annaWinner);
+        vm.expectRevert(NFTLotteryTicket.NonTransferable.selector);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 2;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1;
+        nftLotteryTicket.safeBatchTransferFrom(annaWinner, joeWinner, ids, amounts, "");
+        vm.stopPrank();
+    }
 }
