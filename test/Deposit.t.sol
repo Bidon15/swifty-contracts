@@ -273,7 +273,7 @@ contract DepositTest is Test {
         vm.stopPrank();
 
         vm.startPrank(seller);
-        NFTLotteryTicket nftLotteryTicket = new NFTLotteryTicket("ipfs://example_uri/");
+        NFTLotteryTicket nftLotteryTicket = new NFTLotteryTicket("ipfs://example_uri/", false);
         nftLotteryTicket.setDepositContractAddr(address(deposit));
         deposit.setNftContractAddr(address(nftLotteryTicket));
         deposit.setNumberOfTickets(10);

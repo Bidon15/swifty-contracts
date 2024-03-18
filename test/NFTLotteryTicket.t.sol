@@ -8,6 +8,7 @@ import { VRFCoordinatorV2Mock } from "@chainlink/contracts/v0.8/mocks/VRFCoordin
 
 contract NFTLotteryTicketTest is Test {
     NFTLotteryTicket private nftLotteryTicket;
+    NFTLotteryTicket private nonSoulbond;
     VRFCoordinatorV2Mock public vrfMock;
     Deposit private deposit;
     
@@ -25,7 +26,7 @@ contract NFTLotteryTicketTest is Test {
         vm.stopPrank();
 
         deposit = new Deposit(seller, subId, address(vrfMock));
-        nftLotteryTicket = new NFTLotteryTicket("ipfs://example_uri/");
+        nftLotteryTicket = new NFTLotteryTicket("ipfs://example_uri/", false);
         nftLotteryTicket.setDepositContractAddr(address(deposit));
         deposit.setNftContractAddr(address(nftLotteryTicket));
     }
@@ -93,6 +94,7 @@ contract NFTLotteryTicketTest is Test {
         vm.stopPrank();
 
         vm.prank(annaWinner);
+        deposit.mintMyNFT();
         vm.expectRevert(NFTLotteryTicket.NonTransferable.selector);
         uint256[] memory ids = new uint256[](1);
         ids[0] = 2;
@@ -101,4 +103,36 @@ contract NFTLotteryTicketTest is Test {
         nftLotteryTicket.safeBatchTransferFrom(annaWinner, joeWinner, ids, amounts, "");
         vm.stopPrank();
     }
+
+    function testNonSoulbond() public {
+        address joeWinner = address(1);
+        address annaWinner = address(2);
+
+        
+        nonSoulbond = new NFTLotteryTicket("ipfs://example_uri/", true);
+        nonSoulbond.setDepositContractAddr(address(deposit));
+        deposit.setNftContractAddr(address(nonSoulbond));
+
+        vm.startPrank(seller);
+        deposit.startLottery();
+        deposit.setWinner(joeWinner);
+        deposit.setWinner(annaWinner);
+        deposit.endLottery();
+        vm.stopPrank();
+
+        vm.startPrank(joeWinner);
+        deposit.mintMyNFT();
+        assertEq(nonSoulbond.balanceOf(joeWinner, 1), 1, "Joe must own NFT#1");
+        nonSoulbond.safeTransferFrom(joeWinner, annaWinner, 1, 1, "");
+        vm.stopPrank();
+
+        vm.startPrank(annaWinner);
+        deposit.mintMyNFT();
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 2;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1;
+        nonSoulbond.safeBatchTransferFrom(annaWinner, joeWinner, ids, amounts, "");
+        vm.stopPrank();
+    }    
 }

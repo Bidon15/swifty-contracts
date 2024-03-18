@@ -5,10 +5,13 @@ import { ERC1155 } from "../lib/openzeppelin-contracts/contracts/token/ERC1155/E
 import { Ownable } from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 
 contract NFTLotteryTicket is ERC1155, Ownable(msg.sender) {
-    constructor(string memory uri) ERC1155(uri) {}
+    constructor(string memory uri, bool _isTransferable) ERC1155(uri) {
+        isTransferable = _isTransferable;
+    }
 
     uint256 public nextTokenId = 1;
     address public depositContractAddr;
+    bool public immutable isTransferable;
 
     error NonTransferable();
 
@@ -30,7 +33,10 @@ contract NFTLotteryTicket is ERC1155, Ownable(msg.sender) {
         uint256 amount,
         bytes memory data
     ) public override {
-        revert NonTransferable();
+        if(!isTransferable) {
+            revert NonTransferable();
+        }
+        super.safeTransferFrom(from, to, id, amount, data);
     }
 
     function safeBatchTransferFrom(
@@ -40,6 +46,9 @@ contract NFTLotteryTicket is ERC1155, Ownable(msg.sender) {
         uint256[] memory amounts,
         bytes memory data
     ) public override {
-        revert NonTransferable();
+        if(!isTransferable) {
+            revert NonTransferable();
+        }
+        super.safeBatchTransferFrom(from, to, ids, amounts, data);
     }
 }
