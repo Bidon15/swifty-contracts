@@ -3,6 +3,7 @@ pragma solidity ^0.8.13;
 
 import { Ownable } from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import "src/interfaces/INFTLotteryTicket.sol";
+import "src/interfaces/IERC20.sol";
 
 contract Lottery is Ownable {
     constructor(address _seller)
@@ -35,6 +36,7 @@ contract Lottery is Ownable {
     address[] private participants;
 
     address public nftContractAddr;
+    address public usdcContractAddr;
 
     event LotteryStarted();
     event WinnerSelected(address indexed winner);
@@ -70,13 +72,20 @@ contract Lottery is Ownable {
         _;
     }
 
-    function deposit() public payable whenLotteryNotActive {
-        require(msg.value > 0, "No funds sent");
-        if (deposits[msg.sender] == 0) {
+    function deposit(uint256 amount) public payable whenLotteryNotActive {
+        require(usdcContractAddr != address(0), "USDC contract address not set");
+        require(amount > 0, "No funds sent");
+        require(
+            IERC20(usdcContractAddr).allowance(msg.sender, address(this)) >= amount, 
+            "Insufficient allowance"
+        );
+
+        IERC20(usdcContractAddr).transferFrom(msg.sender, address(this), amount);
+        
+        if(deposits[msg.sender] == 0) {
             participants.push(msg.sender);
         }
-
-        deposits[msg.sender] += msg.value;
+        deposits[msg.sender] += amount;
     }
 
     function getParticipants() public view returns (address[] memory) {
@@ -115,7 +124,7 @@ contract Lottery is Ownable {
         require(amount > 0, "No funds to withdraw");
 
         deposits[msg.sender] = 0;
-        payable(msg.sender).transfer(amount);
+        IERC20(usdcContractAddr).transfer(msg.sender, amount);
     }
 
     function sellerWithdraw() public onlySeller() {
@@ -132,8 +141,8 @@ contract Lottery is Ownable {
         uint256 protocolTax = (totalAmount * 5) / 100; // 5% tax
         uint256 amountToSeller = totalAmount - protocolTax;
 
-        payable(multisigWalletAddress).transfer(protocolTax);
-        payable(seller).transfer(amountToSeller);
+        IERC20(usdcContractAddr).transfer(multisigWalletAddress, protocolTax);
+        IERC20(usdcContractAddr).transfer(seller, amountToSeller);
     }
 
     function getRandomNumber () public view onlySeller returns (uint256) {
@@ -247,5 +256,9 @@ contract Lottery is Ownable {
         require(isWinner(msg.sender), "Caller is not a winner");
         hasMinted[msg.sender] = true;
         INFTLotteryTicket(nftContractAddr).lotteryMint(msg.sender);
+    }
+
+    function setUsdcContractAddr(address _usdcContractAddr) public onlyOwner {
+        usdcContractAddr = _usdcContractAddr;
     }
 }

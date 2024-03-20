@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import {Test, console2} from "forge-std/Test.sol";
+import { Test, console2 } from "forge-std/Test.sol";
 import "forge-std/console.sol";
 import { NFTLotteryTicket } from "../src/NFTLotteryTicket.sol";
 import { Lottery } from "../src/Lottery.sol";
+import { USDC } from "../src/USDC.sol";
 
 contract LotteryTest is Test {
     Lottery public lottery;
+    USDC public usdcToken;
 
     uint256 private sellerPrivateKey = 0xa11ce;
     uint256 private multisigWalletPrivateKey = 0xb334d;
@@ -24,18 +26,35 @@ contract LotteryTest is Test {
         // Deploy the Deposit contract with the seller address
         lottery = new Lottery(seller);
 
+        // Deploy the USDC token contract
+        usdcToken = new USDC("USDC", "USDC", 6, 1000000000000000000000000, 1000000000000000000000000);
+        lottery.setUsdcContractAddr(address(usdcToken));
+
         // Set the multisig wallet address in the Deposit contract
         lottery.setMultisigWalletAddress(multisigWallet);
         vm.stopPrank();
     }
 
+    function provideUsdc(address recipient, uint256 amount) public {
+        vm.startPrank(seller);
+        usdcToken.transfer(recipient, amount);
+        vm.stopPrank();
+
+        vm.startPrank(recipient);
+        // approve lottery to actually spend usdc
+        usdcToken.approve(address(lottery), amount);
+        vm.stopPrank();
+    }
+
     function test_DepositFunds() public {
-        uint256 depositAmount = 1 ether;
+        uint256 depositAmount = 10000;
         address user = address(3); // Example user address
-        vm.deal(user, depositAmount); // Provide 1 ether to user
+
+
+        provideUsdc(user, depositAmount); // Provide 10000 usdc to the user
 
         vm.startPrank(user);
-        lottery.deposit{value: depositAmount}();
+        lottery.deposit(depositAmount);
         assertEq(lottery.deposits(user), depositAmount, "Deposit amount should be recorded correctly");
         vm.stopPrank();
     }
@@ -54,12 +73,12 @@ contract LotteryTest is Test {
 
     function test_NonWinnerWithdrawal() public {
         address nonWinner = address(4); // Example non-winner address
-        uint256 depositAmount = 0.5 ether;
-        vm.deal(nonWinner, depositAmount);
+        uint256 depositAmount = 10000;
 
+        provideUsdc(nonWinner, depositAmount); 
         // Non-winner deposits funds
         vm.startPrank(nonWinner);
-        lottery.deposit{value: depositAmount}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
         // End the lottery
@@ -76,18 +95,18 @@ contract LotteryTest is Test {
     function test_MultipleUsersDeposit() public {
         address user1 = address(3);
         address user2 = address(4);
-        uint256 user1Deposit = 0.5 ether;
-        uint256 user2Deposit = 1 ether;
+        uint256 user1Deposit = 5000;
+        uint256 user2Deposit = 10000;
 
-        vm.deal(user1, user1Deposit);
-        vm.deal(user2, user2Deposit);
+        provideUsdc(user1, user1Deposit);
+        provideUsdc(user2, user2Deposit);
 
         vm.startPrank(user1);
-        lottery.deposit{value: user1Deposit}();
+        lottery.deposit(user1Deposit);
         vm.stopPrank();
 
         vm.startPrank(user2);
-        lottery.deposit{value: user2Deposit}();
+        lottery.deposit(user2Deposit);
         vm.stopPrank();
 
         assertEq(lottery.deposits(user1), user1Deposit, "User1 deposit should be recorded correctly");
@@ -96,14 +115,15 @@ contract LotteryTest is Test {
 
     function test_SellerWithdrawalWithProtocolTax() public {
         address winner = address(3);
-        uint256 winnerDeposit = 1 ether;
+        uint256 winnerDeposit = 10000;
         uint256 protocolTax = (winnerDeposit * 5) / 100; // 5% tax
-        uint256 amountToSeller = winnerDeposit - protocolTax;
+        uint256 amountToSeller = usdcToken.balanceOf(seller) - protocolTax;
 
         // Setup: Winner deposits and is set as a winner
-        vm.deal(winner, winnerDeposit);
+        provideUsdc(winner, winnerDeposit);
+        
         vm.startPrank(winner);
-        lottery.deposit{value: winnerDeposit}();
+        lottery.deposit(winnerDeposit);
         vm.stopPrank();
         vm.prank(seller);
         lottery.setWinner(winner);
@@ -115,17 +135,18 @@ contract LotteryTest is Test {
         lottery.sellerWithdraw();
 
         // Check balances
-        assertEq(address(multisigWallet).balance, protocolTax, "Multisig should receive the correct tax amount");
-        assertEq(address(seller).balance, amountToSeller, "Seller should receive the correct amount after tax");
+        assertEq(usdcToken.balanceOf(multisigWallet), protocolTax, "Multisig should receive the correct tax amount");
+        assertEq(usdcToken.balanceOf(seller), amountToSeller, "Seller should receive the correct amount after tax");
     }
 
     function test_WinnerCannotWithdraw() public {
         address winner = address(3);
-        uint256 depositAmount = 1 ether;
+        uint256 depositAmount = 10000;
 
-        vm.deal(winner, depositAmount);
+        provideUsdc(winner, depositAmount);
+
         vm.startPrank(winner);
-        lottery.deposit{value: depositAmount}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
         // Set as winner and try to withdraw
@@ -146,12 +167,13 @@ contract LotteryTest is Test {
         participants[1] = address(4);
         participants[2] = address(5);
         participants[3] = address(6);
-        uint256 depositAmount = 1 ether;
+        uint256 depositAmount = 10000;
 
         for (uint256 i = 0; i < participants.length; i++) {
-            vm.deal(participants[i], depositAmount);
+            provideUsdc(participants[i], depositAmount);
+
             vm.startPrank(participants[i]);
-            lottery.deposit{value: depositAmount}();
+            lottery.deposit(depositAmount);
             vm.stopPrank();
         }
 
@@ -175,10 +197,10 @@ contract LotteryTest is Test {
 
         // Ensure losers can withdraw
         for (uint256 i = 2; i < participants.length; i++) {
-            uint256 initialBalance = participants[i].balance;
+            uint256 initialBalance = usdcToken.balanceOf(participants[i]);
             vm.startPrank(participants[i]);
             lottery.buyerWithdraw();
-            assertEq(participants[i].balance, initialBalance + depositAmount, "Loser should withdraw their deposit");
+            assertEq(usdcToken.balanceOf(participants[i]), initialBalance + depositAmount, "Loser should withdraw their deposit");
             vm.stopPrank();
         }
 
@@ -186,28 +208,28 @@ contract LotteryTest is Test {
         uint256 totalPrizePool = depositAmount * 2; // Assuming 2 winners
         uint256 protocolTax = (totalPrizePool * 5) / 100;
         uint256 amountToSeller = totalPrizePool - protocolTax;
-        uint256 initialSellerBalance = seller.balance;
-        uint256 initialMultisigBalance = multisigWallet.balance;
+        uint256 initialSellerBalance = usdcToken.balanceOf(seller);
+        uint256 initialMultisigBalance = usdcToken.balanceOf(multisigWallet);
 
         vm.prank(seller);
         lottery.sellerWithdraw();
 
         assertEq(
-            seller.balance, initialSellerBalance + amountToSeller, "Seller should receive correct amount after tax"
+            usdcToken.balanceOf(seller), initialSellerBalance + amountToSeller, "Seller should receive correct amount after tax"
         );
-        assertEq(multisigWallet.balance, initialMultisigBalance + protocolTax, "Multisig should receive the tax amount");
+        assertEq(usdcToken.balanceOf(multisigWallet), initialMultisigBalance + protocolTax, "Multisig should receive the tax amount");
     }
 
     function test_EdgeCaseDeposits() public {
         address user = address(3);
-        uint256 depositAmount = 1 ether;
+        uint256 depositAmount = 10000;
 
         // Setup: Provide Ether to the user
-        vm.deal(user, depositAmount);
+        provideUsdc(user, depositAmount);
 
         // Case 1: Deposit right before the lottery starts
         vm.startPrank(user);
-        lottery.deposit{value: depositAmount}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
         assertEq(lottery.deposits(user), depositAmount, "Deposit before start should be recorded");
 
@@ -228,18 +250,21 @@ contract LotteryTest is Test {
         vm.stopPrank();
 
         // Case 3: Deposit right after the lottery ends
-        vm.deal(user, depositAmount);
+        provideUsdc(user, depositAmount);
+
         vm.startPrank(user);
-        lottery.deposit{value: depositAmount}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
         assertEq(lottery.deposits(user), depositAmount, "Deposit after end should be recorded");
     }
 
     function test_nftMintHappyPath() public {
         address user = address(3);
+        uint256 depositAmount = 10000;
+
+        provideUsdc(user, depositAmount);
         vm.startPrank(user);
-        vm.deal(user, 1 ether);
-        lottery.deposit{value: 1 ether}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
         vm.startPrank(seller);
@@ -247,7 +272,7 @@ contract LotteryTest is Test {
         nftLotteryTicket.setDepositContractAddr(address(lottery));
         lottery.setNftContractAddr(address(nftLotteryTicket));
         lottery.setNumberOfTickets(10);
-        lottery.setMinimumDepositAmount(1 ether);
+        lottery.setMinimumDepositAmount(depositAmount);
         lottery.startLottery();
         lottery.selectWinners();
         lottery.endLottery();
@@ -264,14 +289,16 @@ contract LotteryTest is Test {
         address user = address(3);
         address joe = address(4);
 
+        uint256 depositAmount = 10000;
+
+        provideUsdc(user, depositAmount);
         vm.startPrank(user);
-        vm.deal(user, 1 ether);
-        lottery.deposit{value: 1 ether}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
-        vm.startPrank(joe);
-        vm.deal(joe, 1 ether);
-        lottery.deposit{value: 1 ether}();
+        provideUsdc(joe, depositAmount);
+        vm.startPrank(joe); 
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
         vm.startPrank(seller);
@@ -279,7 +306,7 @@ contract LotteryTest is Test {
         nftLotteryTicket.setDepositContractAddr(address(lottery));
         lottery.setNftContractAddr(address(nftLotteryTicket));
         lottery.setNumberOfTickets(2);
-        lottery.setMinimumDepositAmount(1 ether);
+        lottery.setMinimumDepositAmount(depositAmount);
         lottery.startLottery();
         assertEq(lottery.isParticipantEligible(user), true, "user should be eligable to win");
         assertEq(lottery.isParticipantEligible(joe), true, "joe should be eligable to win");
@@ -300,19 +327,22 @@ contract LotteryTest is Test {
         address joe = address(4);
         address anna = address(5);
 
+        uint256 depositAmount = 10000;
+
+        provideUsdc(user, depositAmount);
         vm.startPrank(user);
-        vm.deal(user, 1 ether);
-        lottery.deposit{value: 1 ether}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
+        provideUsdc(joe, depositAmount);
         vm.startPrank(joe);
-        vm.deal(joe, 1 ether);
-        lottery.deposit{value: 1 ether}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
+
+        provideUsdc(anna, depositAmount);
         vm.startPrank(anna);
-        vm.deal(anna, 1 ether);
-        lottery.deposit{value: 1 ether}();
+        lottery.deposit(depositAmount);
         vm.stopPrank();
 
         vm.startPrank(seller);
@@ -320,7 +350,7 @@ contract LotteryTest is Test {
         nftLotteryTicket.setDepositContractAddr(address(lottery));
         lottery.setNftContractAddr(address(nftLotteryTicket));
         lottery.setNumberOfTickets(1);
-        lottery.setMinimumDepositAmount(1 ether);
+        lottery.setMinimumDepositAmount(depositAmount);
         lottery.startLottery();
         assertEq(lottery.isParticipantEligible(user), true, "user should be eligable to win");
         assertEq(lottery.isParticipantEligible(joe), true, "joe should be eligable to win");
